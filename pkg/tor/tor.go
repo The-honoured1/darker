@@ -1,29 +1,135 @@
 package tor
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"golang.org/x/net/proxy"
 )
 
+const (
+	torWinURL   = "https://dist.torproject.org/torbrowser/15.0.7/tor-expert-bundle-windows-x86_64-15.0.7.tar.gz"
+	torLinuxURL = "https://dist.torproject.org/torbrowser/15.0.7/tor-expert-bundle-linux-x86_64-15.0.7.tar.gz"
+)
+
 // Manager handles the lifecycle of the Tor process.
 type Manager struct {
-	cmd *exec.Cmd
+	cmd        *exec.Cmd
+	binaryPath string
+}
+
+// EnsureTorBinary checks for the tor binary or downloads it if missing.
+func (m *Manager) EnsureTorBinary() (string, error) {
+	// 1. Check if 'tor' is in PATH
+	binName := "tor"
+	if runtime.GOOS == "windows" {
+		binName = "tor.exe"
+	}
+
+	path, err := exec.LookPath(binName)
+	if err == nil {
+		m.binaryPath = path
+		return path, nil
+	}
+
+	// 2. Check in local bin/ folder
+	localBinDir := "bin"
+	localPath := filepath.Join(localBinDir, binName)
+	if runtime.GOOS == "windows" {
+		// In Windows bundle, it's often in tor/tor.exe inside the extracted folder
+		localPath = filepath.Join(localBinDir, "tor", "tor.exe")
+	} else {
+		localPath = filepath.Join(localBinDir, "tor", "tor")
+	}
+
+	if _, err := os.Stat(localPath); err == nil {
+		m.binaryPath = localPath
+		return localPath, nil
+	}
+
+	// 3. Download if not found
+	fmt.Printf("Tor binary not found. Downloading expert bundle for %s...\n", runtime.GOOS)
+	url := torLinuxURL
+	if runtime.GOOS == "windows" {
+		url = torWinURL
+	}
+
+	if err := os.MkdirAll(localBinDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create bin dir: %w", err)
+	}
+
+	if err := m.downloadAndExtract(url, localBinDir); err != nil {
+		return "", fmt.Errorf("failed to download/extract tor: %w", err)
+	}
+
+	m.binaryPath = localPath
+	return localPath, nil
+}
+
+func (m *Manager) downloadAndExtract(url, destDir string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download: %s", resp.Status)
+	}
+
+	gzr, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		target := filepath.Join(destDir, header.Name)
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
+			f.Close()
+		}
+	}
+	return nil
 }
 
 // Start launches a local Tor process.
-// It assumes the 'tor' binary is in the system PATH.
 func (m *Manager) Start() error {
-	// Check if tor is in PATH
-	_, err := exec.LookPath("tor")
-	if err != nil {
-		return fmt.Errorf("tor binary not found in PATH. Please install tor ('sudo apt install tor')")
+	if m.binaryPath == "" {
+		if _, err := m.EnsureTorBinary(); err != nil {
+			return err
+		}
 	}
 
 	// We use a temporary data directory for Tor
@@ -32,7 +138,7 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to create temp data dir: %w", err)
 	}
 
-	m.cmd = exec.Command("tor",
+	m.cmd = exec.Command(m.binaryPath,
 		"--DataDirectory", dataDir,
 		"--SocksPort", "9050",
 		"--ControlPort", "9051",
