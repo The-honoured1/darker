@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"time"
 
 	"darker/internal/db"
 	"darker/internal/engine"
@@ -21,15 +22,40 @@ func main() {
 	}
 	defer store.Close()
 
-	// Initialize Tor Client (Assumes Tor is running on local 9050)
+	// Try to connect to existing Tor proxy first
 	torClient, err := tor.NewClient("127.0.0.1:9050")
-	if err != nil {
-		log.Printf("Error: Failed to initialize Tor client: %v", err)
-	} else {
-		if err := torClient.CheckConnection(); err != nil {
-			log.Printf("Warning: Tor proxy found but connectivity check failed: %v", err)
-			log.Println("Ensure Tor is correctly configured and has a circuit established.")
+	var torManager *tor.Manager
+
+	if err != nil || torClient.CheckConnection() != nil {
+		log.Println("Existing Tor proxy not found or unreachable. Attempting to start local Tor...")
+		torManager = &tor.Manager{}
+		if err := torManager.Start(); err != nil {
+			log.Printf("Failed to start local Tor: %v", err)
+			log.Println("Ensure Tor is installed ('sudo apt install tor') and accessible.")
+		} else {
+			log.Println("Local Tor process started. Waiting for connection...")
+			// Wait for Tor to bootstrap
+			// We retry connection check for a bit
+			connected := false
+			for i := 0; i < 30; i++ {
+				if torClient.CheckConnection() == nil {
+					connected = true
+					break
+				}
+				time.Sleep(2 * time.Second)
+			}
+			if !connected {
+				log.Println("Warning: Local Tor started but connectivity check still failing.")
+			} else {
+				log.Println("Connected to local Tor successfully.")
+			}
 		}
+	} else {
+		log.Println("Connected to existing Tor proxy.")
+	}
+
+	if torManager != nil {
+		defer torManager.Stop()
 	}
 
 	// Initialize Crawler

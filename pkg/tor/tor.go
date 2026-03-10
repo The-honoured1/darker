@@ -5,10 +5,57 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"time"
 
 	"golang.org/x/net/proxy"
 )
+
+// Manager handles the lifecycle of the Tor process.
+type Manager struct {
+	cmd *exec.Cmd
+}
+
+// Start launches a local Tor process.
+// It assumes the 'tor' binary is in the system PATH.
+func (m *Manager) Start() error {
+	// Check if tor is in PATH
+	_, err := exec.LookPath("tor")
+	if err != nil {
+		return fmt.Errorf("tor binary not found in PATH. Please install tor ('sudo apt install tor')")
+	}
+
+	// We use a temporary data directory for Tor
+	dataDir, err := os.MkdirTemp("", "darker-tor-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp data dir: %w", err)
+	}
+
+	m.cmd = exec.Command("tor",
+		"--DataDirectory", dataDir,
+		"--SocksPort", "9050",
+		"--ControlPort", "9051",
+		"--CookieAuthentication", "1",
+		"--Log", "notice stdout",
+	)
+
+	// In a real app we might want to capture output to check for "Bootstrapped 100%"
+	// For now we just start it and let CheckConnection handle readiness
+	if err := m.cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start tor: %w", err)
+	}
+
+	return nil
+}
+
+// Stop terminates the Tor process.
+func (m *Manager) Stop() error {
+	if m.cmd != nil && m.cmd.Process != nil {
+		return m.cmd.Process.Kill()
+	}
+	return nil
+}
 
 // Client is a wrapper around http.Client that routes traffic through Tor.
 type Client struct {
