@@ -94,11 +94,11 @@ func (s *Store) SearchSites(queryText string) ([]Site, error) {
 	}
 
 	rows, err := s.db.Query(`
-		SELECT id, url, title, description, last_seen, is_active 
+		SELECT sites.id, sites.url, sites.title, sites.description, sites.last_seen, sites.is_active 
 		FROM sites 
 		JOIN sites_fts ON sites.id = sites_fts.rowid
 		WHERE sites_fts MATCH ?
-		ORDER BY rank, last_seen DESC
+		ORDER BY sites_fts.rank, sites.last_seen DESC
 	`, queryText)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
