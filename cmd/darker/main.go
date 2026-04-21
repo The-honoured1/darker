@@ -18,7 +18,7 @@ func main() {
 	// Initialize Database
 	store, err := db.NewStore("darker.db")
 	if err != nil {
-		log.Fatalf("Critical: Failed to initialize database: %v\nNote: If you see 'no such module: fts5', run with: go run -tags \"fts5\" main.go", err)
+		log.Fatalf("Critical: Failed to initialize database: %v", err)
 	}
 	defer store.Close()
 

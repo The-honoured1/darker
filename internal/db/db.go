@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Site represents an indexed onion website.
@@ -25,7 +25,7 @@ type Store struct {
 
 // NewStore initializes a new SQLite database and creates the necessary tables.
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
